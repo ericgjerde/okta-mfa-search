@@ -89,6 +89,7 @@ The script generates three files with timestamps:
 - The API token needs read permissions for users and factors
 - Consider using a service account with minimal required permissions
 - Store API tokens securely using your organization's secret management solution
+- The script restricts domains to Okta-hosted tenants only: `*.okta.com`, `*.oktapreview.com`, `*.okta-emea.com`. This helps prevent accidental token leakage to non-Okta hosts.
 
 ## Rate Limiting
 
@@ -96,6 +97,7 @@ The script automatically handles Okta's rate limiting:
 - Monitors rate limit headers
 - Pauses when approaching limits
 - Retries automatically if rate limited
+- Honors `Retry-After` (seconds) or `X-Rate-Limit-Reset` (epoch) for safe backoff
 
 ## Requirements
 

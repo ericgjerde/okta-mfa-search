@@ -70,21 +70,43 @@ class OktaWebAuthnAuditor:
             if wait_time > 0:
                 print(f"Rate limit approaching, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time + 1)
-        
+
         response = self.session.get(url, params=params)
-        
+
         # Update rate limit info
         if 'x-rate-limit-remaining' in response.headers:
-            self.rate_limit_remaining = int(response.headers['x-rate-limit-remaining'])
+            try:
+                self.rate_limit_remaining = int(response.headers['x-rate-limit-remaining'])
+            except ValueError:
+                pass
         if 'x-rate-limit-reset' in response.headers:
-            self.rate_limit_reset = int(response.headers['x-rate-limit-reset'])
-        
+            try:
+                self.rate_limit_reset = int(response.headers['x-rate-limit-reset'])
+            except ValueError:
+                pass
+
         if response.status_code == 429:
-            retry_after = int(response.headers.get('x-rate-limit-reset', 60))
-            print(f"Rate limited. Waiting {retry_after} seconds...")
-            time.sleep(retry_after)
+            headers = {k.lower(): v for k, v in response.headers.items()}
+            sleep_seconds: Optional[int] = None
+            # Prefer Retry-After if present (seconds)
+            if 'retry-after' in headers:
+                try:
+                    sleep_seconds = int(headers['retry-after'])
+                except ValueError:
+                    sleep_seconds = None
+            # Fallback to X-Rate-Limit-Reset (epoch seconds)
+            if sleep_seconds is None and 'x-rate-limit-reset' in headers:
+                try:
+                    reset_epoch = int(headers['x-rate-limit-reset'])
+                    sleep_seconds = max(0, reset_epoch - int(time.time())) + 1
+                except ValueError:
+                    sleep_seconds = None
+            if sleep_seconds is None:
+                sleep_seconds = 60
+            print(f"Rate limited. Waiting {sleep_seconds} seconds...")
+            time.sleep(sleep_seconds)
             return self._make_request(url, params)
-        
+
         response.raise_for_status()
         return response
     
@@ -147,31 +169,29 @@ class OktaWebAuthnAuditor:
             return f"{factor_type}:{provider}"
         return factor_type
     
-    def audit_webauthn(self) -> tuple:
+    def audit_users_for_webauthn(self, users: List[Dict]) -> tuple:
         """
-        Audit all users for WebAuthn factors.
+        Analyze provided users for WebAuthn factors.
         Returns tuple of (users_with_webauthn, users_without_webauthn)
         """
-        users = self.get_all_users()
-        
-        users_with_webauthn = []
-        users_without_webauthn = []
-        
+        users_with_webauthn: List[Dict] = []
+        users_without_webauthn: List[Dict] = []
+
         print(f"\nAnalyzing WebAuthn enrollment for {len(users)} users...")
-        
+
         for i, user in enumerate(users, 1):
             if i % 10 == 0:
                 print(f"  Processing user {i}/{len(users)}...")
-            
+
             user_id = user.get('id')
             factors = self.get_user_factors(user_id)
-            
+
             # Check for WebAuthn
             has_webauthn = any(f.get('factorType') == 'webauthn' for f in factors)
-            
+
             # Get all factor types for reporting
             factor_types = [self.get_factor_display_name(f) for f in factors]
-            
+
             user_info = {
                 'email': user.get('profile', {}).get('email', ''),
                 'login': user.get('profile', {}).get('login', ''),
@@ -184,28 +204,36 @@ class OktaWebAuthnAuditor:
                 'factorCount': len(factors),
                 'userId': user_id
             }
-            
+
             if self.detailed:
                 # Add additional fields for detailed mode
                 user_info['department'] = user.get('profile', {}).get('department', '')
                 user_info['hasWebAuthn'] = 'Yes' if has_webauthn else 'No'
-                
+
                 # Add individual factor details
                 for f in factors:
                     if f.get('factorType') == 'webauthn':
                         user_info['webauthnDetails'] = f.get('profile', {}).get('authenticatorName', 'Unknown')
                         break
-            
+
             if has_webauthn:
                 users_with_webauthn.append(user_info)
             else:
                 users_without_webauthn.append(user_info)
-        
+
         print(f"\nAudit complete!")
         print(f"  Users with WebAuthn: {len(users_with_webauthn)}")
         print(f"  Users without WebAuthn: {len(users_without_webauthn)}")
-        
+
         return users_with_webauthn, users_without_webauthn
+
+    def audit_webauthn(self, status: str = 'ACTIVE') -> tuple:
+        """
+        Fetch users by status and analyze for WebAuthn factors.
+        Returns tuple of (users_with_webauthn, users_without_webauthn)
+        """
+        users = self.get_all_users(status=status)
+        return self.audit_users_for_webauthn(users)
     
     def save_results(self, users_with: List[Dict], users_without: List[Dict]) -> None:
         """Save audit results to CSV files and generate summary."""
@@ -253,8 +281,14 @@ class OktaWebAuthnAuditor:
             
             total_users = len(users_with) + len(users_without)
             f.write(f"Total Active Users Audited: {total_users}\n")
-            f.write(f"Users WITH WebAuthn: {len(users_with)} ({len(users_with)/total_users*100:.1f}%)\n")
-            f.write(f"Users WITHOUT WebAuthn: {len(users_without)} ({len(users_without)/total_users*100:.1f}%)\n")
+            if total_users > 0:
+                with_pct = (len(users_with) / total_users) * 100
+                without_pct = (len(users_without) / total_users) * 100
+            else:
+                with_pct = 0.0
+                without_pct = 0.0
+            f.write(f"Users WITH WebAuthn: {len(users_with)} ({with_pct:.1f}%)\n")
+            f.write(f"Users WITHOUT WebAuthn: {len(users_without)} ({without_pct:.1f}%)\n")
             
             if self.detailed:
                 # Add detailed statistics
@@ -289,6 +323,25 @@ class OktaWebAuthnAuditor:
             f.write("\n")
         
         print(f"Saved summary report to: {summary_file}")
+
+
+def is_allowed_okta_domain(domain: str) -> bool:
+    """Validate that the provided domain is an Okta-hosted domain we trust."""
+    if not domain:
+        return False
+    d = domain.strip()
+    if not d:
+        return False
+    if not d.startswith('http://') and not d.startswith('https://'):
+        d = f'https://{d}'
+    parsed = urlparse(d)
+    host = parsed.hostname or ''
+    allowed_suffixes = (
+        'okta.com',
+        'oktapreview.com',
+        'okta-emea.com',
+    )
+    return any(host == s or host.endswith('.' + s) for s in allowed_suffixes)
 
 
 def main():
@@ -349,7 +402,12 @@ Examples:
     if not domain or not api_token:
         print("Error: Okta domain and API token are required.")
         sys.exit(1)
-    
+
+    # Safety: ensure domain belongs to Okta-managed domains
+    if not is_allowed_okta_domain(domain):
+        print("Error: Domain must be an Okta-hosted domain (okta.com, oktapreview.com, okta-emea.com).")
+        sys.exit(1)
+
     # Initialize auditor
     auditor = OktaWebAuthnAuditor(domain, api_token, detailed=args.detailed)
     
@@ -370,26 +428,25 @@ Examples:
     try:
         if args.status == 'ALL':
             # Audit all user statuses
-            all_with = []
-            all_without = []
-            
+            all_with: List[Dict] = []
+            all_without: List[Dict] = []
+
             for status in ['ACTIVE', 'PROVISIONED', 'STAGED', 'SUSPENDED']:
                 print(f"\nAuditing {status} users...")
-                auditor_temp = OktaWebAuthnAuditor(domain, api_token, detailed=args.detailed)
-                users = auditor_temp.get_all_users(status=status)
+                users = auditor.get_all_users(status=status)
                 if users:
-                    with_wa, without_wa = auditor_temp.audit_webauthn()
+                    with_wa, without_wa = auditor.audit_users_for_webauthn(users)
                     all_with.extend(with_wa)
                     all_without.extend(without_wa)
-            
+
             auditor.save_results(all_with, all_without)
         else:
             # Audit specific status
-            users_with_webauthn, users_without_webauthn = auditor.audit_webauthn()
+            users_with_webauthn, users_without_webauthn = auditor.audit_webauthn(status=args.status)
             auditor.save_results(users_with_webauthn, users_without_webauthn)
-        
+
         print("\nAudit complete! Check the generated CSV and summary files for details.")
-        
+
     except KeyboardInterrupt:
         print("\nAudit interrupted by user.")
         sys.exit(1)
