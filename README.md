@@ -1,106 +1,175 @@
-# Okta WebAuthn Factor Audit Tool
+# Okta Security Audit Tools
 
-A Python script to audit WebAuthn authentication factors across all users in your Okta instance.
+A collection of Python scripts to audit security configurations across your Okta tenant. These tools help administrators track MFA enrollment, Device Trust status, and identify users who need security improvements.
 
-## Features
+## 🔧 Available Tools
 
-- Fetches users from your Okta instance (configurable by status)
-- Checks each user for WebAuthn authentication factors
-- Generates CSV reports of users with and without WebAuthn
-- Creates a summary report with statistics
-- Handles Okta API rate limiting automatically
-- Shows other enrolled factor types for users without WebAuthn
-- **Detailed mode** provides additional user fields and WebAuthn authenticator analysis
-- Support for auditing different user statuses (ACTIVE, PROVISIONED, STAGED, etc.)
+### 1. WebAuthn Factor Audit (`okta_webauthn_audit.py`)
+Audits WebAuthn/FIDO2 authentication factor enrollment across all users.
 
-## Setup
+**Use cases:**
+- Track WebAuthn/FIDO2 adoption
+- Identify users without phishing-resistant authentication
+- Generate compliance reports for passwordless initiatives
 
-1. Install dependencies:
+### 2. Device Trust Audit (`okta_device_trust_audit.py`)
+Audits Device Trust enrollment and categorizes users by their device security status.
+
+**Use cases:**
+- Monitor Device Trust rollout progress
+- Identify users ready for device enrollment
+- Track managed vs unmanaged devices
+- Generate reports for zero-trust initiatives
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+1. Python 3.6 or higher
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Create an Okta API Token:
+3. Create an Okta API Token:
    - Log into your Okta Admin Console
    - Navigate to Security > API > Tokens
-   - Create a new token and save it securely
-
-## Usage
+   - Create a new token with read permissions for:
+     - Users (`okta.users.read`)
+     - Factors (`okta.factors.read`)
+     - Devices (`okta.devices.read`) - required for Device Trust audit
 
 ### Basic Usage
 
+Both tools support the same authentication methods:
+
 ```bash
-# Standard audit using environment variables
+# Set environment variables (recommended)
 export OKTA_DOMAIN="your-domain.okta.com"
 export OKTA_API_TOKEN="your-api-token-here"
+
+# Run WebAuthn audit
 python okta_webauthn_audit.py
 
-# Interactive mode - prompts for credentials
-python okta_webauthn_audit.py
+# Run Device Trust audit
+python okta_device_trust_audit.py
 
-# Detailed mode with additional statistics
+# Or use interactive mode (prompts for credentials)
 python okta_webauthn_audit.py --detailed
+python okta_device_trust_audit.py --detailed
+```
 
-# Audit all user statuses (not just ACTIVE)
-python okta_webauthn_audit.py --status ALL
+## 📊 Output Files
 
-# Audit specific user status
+Each tool generates timestamped CSV files and summary reports:
+
+### WebAuthn Audit Output
+- `users_with_webauthn_*.csv` - Users with WebAuthn configured
+- `users_without_webauthn_*.csv` - Users needing WebAuthn
+- `webauthn_audit_summary_*.txt` - Statistics and factor distribution
+
+### Device Trust Audit Output
+- `users_device_trust_enrolled_*.csv` - Users with Device Trust active
+- `users_device_trust_pending_*.csv` - Users with Okta Verify but no devices
+- `users_device_trust_not_enrolled_*.csv` - Users without Device Trust capability
+- `device_trust_audit_summary_*.txt` - Statistics and recommendations
+
+## 🎯 Common Use Cases
+
+### Complete Security Audit
+Run both tools to get a comprehensive view of your security posture:
+
+```bash
+# Audit everything with detailed output
+python okta_webauthn_audit.py --detailed
+python okta_device_trust_audit.py --detailed
+```
+
+### Monitor Specific User Groups
+```bash
+# Audit only active users (default)
+python okta_device_trust_audit.py --status ACTIVE
+
+# Audit all user statuses
+python okta_device_trust_audit.py --status ALL
+
+# Audit suspended users
 python okta_webauthn_audit.py --status SUSPENDED
 ```
 
-### Command Line Options
+### Debugging Individual Users
+Use the debug tool to troubleshoot specific users:
 
-- `--detailed`, `-d`: Enable detailed output with additional user fields and statistics
-- `--domain`: Specify Okta domain (alternative to OKTA_DOMAIN env var)
-- `--status`: User status to audit (ACTIVE, PROVISIONED, STAGED, SUSPENDED, or ALL)
-- `--help`: Show help message with all options
+```bash
+python debug_device_trust.py
+# Enter domain, token, and user email when prompted
+```
 
-## Output Files
+## 📋 Command Line Options
 
-The script generates three files with timestamps:
+Both audit tools support these options:
 
-### Standard Mode
-- `users_with_webauthn_YYYYMMDD_HHMMSS.csv` - Users who have WebAuthn configured
-- `users_without_webauthn_YYYYMMDD_HHMMSS.csv` - Users who need WebAuthn enrollment
-- `webauthn_audit_summary_YYYYMMDD_HHMMSS.txt` - Summary statistics and factor distribution
+- `--detailed`, `-d` - Enable detailed output with additional fields
+- `--domain DOMAIN` - Specify Okta domain (alternative to env var)
+- `--status STATUS` - User status to audit (ACTIVE, PROVISIONED, STAGED, SUSPENDED, ALL)
+- `--help` - Show help message
 
-### Detailed Mode (--detailed flag)
-- `users_with_webauthn_detailed_YYYYMMDD_HHMMSS.csv` - Enhanced user data with WebAuthn details
-- `users_without_webauthn_detailed_YYYYMMDD_HHMMSS.csv` - Enhanced user data for non-WebAuthn users
-- `webauthn_audit_summary_detailed_YYYYMMDD_HHMMSS.txt` - Extended statistics including authenticator types
+## 🔐 Security Features
 
-## CSV Fields
+- **Domain Validation**: Only connects to official Okta domains (okta.com, oktapreview.com, okta-emea.com)
+- **Secure Token Handling**: Uses getpass for hidden input, never logs tokens
+- **Read-Only Operations**: Scripts only read data, never modify your Okta configuration
+- **Rate Limit Handling**: Automatically manages Okta API rate limits
 
-### Standard Mode
-- Email, Login, First Name, Last Name
-- Status, Created Date, Last Login
-- Factor Types (all enrolled factors)
-- Factor Count, User ID
+## 📈 Understanding Device Trust Results
 
-### Detailed Mode (additional fields)
-- Department
-- Has WebAuthn (Yes/No)
-- WebAuthn Details (authenticator name for users with WebAuthn)
-- Human-readable factor names
+The Device Trust audit categorizes users into three groups:
 
-## Security Notes
+1. **ENROLLED** ✅
+   - Has Okta Verify with FastPass
+   - Has registered/managed devices
+   - Fully compliant with Device Trust policies
 
-- Never commit your API token to version control
-- The API token needs read permissions for users and factors
-- Consider using a service account with minimal required permissions
-- Store API tokens securely using your organization's secret management solution
-- The script restricts domains to Okta-hosted tenants only: `*.okta.com`, `*.oktapreview.com`, `*.okta-emea.com`. This helps prevent accidental token leakage to non-Okta hosts.
+2. **PENDING** ⚠️
+   - Has Okta Verify installed
+   - No registered devices yet
+   - Ready for device enrollment
 
-## Rate Limiting
+3. **NOT_ENROLLED** ❌
+   - No Okta Verify
+   - Cannot use Device Trust features
+   - Needs Okta Verify deployment
 
-The script automatically handles Okta's rate limiting:
-- Monitors rate limit headers
-- Pauses when approaching limits
-- Retries automatically if rate limited
-- Honors `Retry-After` (seconds) or `X-Rate-Limit-Reset` (epoch) for safe backoff
+## 🤝 Contributing
 
-## Requirements
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
 
-- Python 3.6+
-- `requests` library
-- Valid Okta API token with user/factor read permissions
+## 📝 License
+
+MIT License - See LICENSE file for details
+
+## ⚠️ Important Notes
+
+- Never commit API tokens to version control
+- Use service accounts with minimal required permissions
+- Store tokens securely using your organization's secret management
+- The scripts are read-only and safe to run in production
+
+## 🐛 Troubleshooting
+
+### No device data returned
+Ensure your API token has device read permissions (`okta.devices.read`)
+
+### All users show as PENDING for Device Trust
+Check if Device Trust policies are properly configured in your Okta tenant
+
+### Rate limiting errors
+The scripts handle rate limiting automatically, but you can reduce load by:
+- Auditing specific user groups with `--status`
+- Running audits during off-peak hours
+
+## 📚 Additional Resources
+
+- [Okta WebAuthn Documentation](https://developer.okta.com/docs/guides/webauthn/)
+- [Okta Device Trust Documentation](https://help.okta.com/en/prod/Content/Topics/Device-Trust/device-trust-overview.htm)
+- [Okta API Reference](https://developer.okta.com/docs/reference/)
