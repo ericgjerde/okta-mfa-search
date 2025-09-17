@@ -2,6 +2,8 @@
 
 A collection of Python scripts to audit security configurations across your Okta tenant. These tools help administrators track MFA enrollment, Device Trust status, and identify users who need security improvements.
 
+**Tools included:** WebAuthn/FIDO2 audit, Device Trust enrollment tracking, and MFA adoption reports.
+
 ## 🔧 Available Tools
 
 ### 1. WebAuthn Factor Audit (`okta_webauthn_audit.py`)
